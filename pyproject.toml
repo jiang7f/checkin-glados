@@ -1,0 +1,30 @@
+[project]
+name = "checkin-glados"
+version = "0.1.0"
+description = "GLaDOS daily check-in"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx[http2]>=0.24.0",
+  "python-dotenv>=1.0.0"
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
+  "ruff>=0.1.0"
+]
+
+[tool.ruff]
+line-length = 120
+fix = true
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "tab"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
