@@ -1,0 +1,45 @@
+name: 问题反馈 / Bug report
+description: 报告登录、签到、通知或定时任务的问题
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请勿上传 Cookie、.env、浏览器配置、验证码或飞书 Webhook。收到飞书通知不等于签到成功，请提供通知中的签到结果。
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境
+      placeholder: macOS 15 / Python 3.12 / 本地终端或 launchd
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 项目版本
+      description: git rev-parse --short HEAD 的输出
+    validations:
+      required: true
+  - type: dropdown
+    id: login
+    attributes:
+      label: 登录方式
+      options:
+        - login 独立浏览器
+        - update-cookie Chrome 导入
+        - 手动 Cookie
+        - 尚未登录
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 运行命令、复现步骤和预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏后的日志和实际结果
+      render: text
+    validations:
+      required: true

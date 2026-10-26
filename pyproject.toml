@@ -1,12 +1,21 @@
 [project]
 name = "checkin-glados"
 version = "0.1.0"
-description = "GLaDOS daily check-in"
+description = "GLaDOS daily check-in with interactive browser login and Feishu notifications"
+readme = "README.md"
+license = "MIT"
+keywords = ["glados", "glados-checkin", "daily-checkin", "automation", "feishu", "cloakbrowser"]
 requires-python = ">=3.11"
 dependencies = [
-  "httpx[http2]>=0.24.0",
-  "python-dotenv>=1.0.0"
+  "browser-cookie3>=0.20.1",
+  "cloakbrowser>=0.4.10",
+  "httpx[http2,socks]>=0.24.0",
+  "python-dotenv>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jiang7f/checkin-glados"
+Issues = "https://github.com/jiang7f/checkin-glados/issues"
 
 [dependency-groups]
 dev = [
