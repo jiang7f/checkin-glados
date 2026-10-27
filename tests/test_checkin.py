@@ -194,9 +194,7 @@ def test_checkin_stops_on_auth_failure_and_explains_cookie_recovery(response):
 	assert result.success is False
 	assert len(client.posts) == 1
 	assert client.gets == []
-	assert '已停止重试' in result.message
-	assert 'GLADOS_COOKIE' in result.message
-	assert 'GLADOS_KOA_SESS / GLADOS_KOA_SESS_SIG' in result.message
+	assert 'checkin-glados login' in result.message
 	assert 'private-session' not in result.message
 	assert 'private-signature' not in result.message
 

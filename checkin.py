@@ -25,6 +25,14 @@ CHECKIN_URL = f'{BASE_URL}/api/user/checkin'
 POINTS_URL = f'{BASE_URL}/api/user/points'
 STATUS_URL = f'{BASE_URL}/api/user/status'
 ENV_PATH = Path(__file__).resolve().with_name('.env')
+LOGIN_ENV_KEYS = (
+	'GLADOS_COOKIE',
+	'GLADOS_GLD_SESS',
+	'GLADOS_GLD_SESS_SIG',
+	'GLADOS_KOA_SESS',
+	'GLADOS_KOA_SESS_SIG',
+	'GLADOS_USER_AGENT',
+)
 
 
 @dataclass
@@ -58,7 +66,7 @@ def load_cookie_header() -> str:
 	if koa_sess and koa_sess_sig:
 		return build_cookie_header(koa_sess, koa_sess_sig)
 
-	raise ValueError('GLaDOS Cookie is not configured; run checkin-glados login')
+	raise ValueError('未配置登录态，请运行 checkin-glados add <名称>。')
 
 
 def request_headers(cookie_header: str, *, user_agent: str | None = None) -> dict[str, str]:
@@ -80,8 +88,8 @@ def parse_json_response(response: httpx.Response) -> dict:
 	try:
 		payload = response.json()
 	except ValueError:
-		return {'code': -1, 'message': 'Invalid JSON response'}
-	return payload if isinstance(payload, dict) else {'code': -1, 'message': 'Invalid response payload'}
+		return {'code': -1, 'message': '网站返回了非 JSON 响应'}
+	return payload if isinstance(payload, dict) else {'code': -1, 'message': '网站响应格式无效'}
 
 
 def to_int(value) -> int | None:
@@ -97,7 +105,7 @@ def fetch_points(client, headers: dict[str, str], *, log=print) -> tuple[int | N
 	try:
 		payload = parse_json_response(client.get(POINTS_URL, headers=headers, timeout=30))
 	except Exception as exc:
-		log(f'[WARN] Failed to fetch GLaDOS points: {type(exc).__name__}')
+		log(f'[WARN] 积分查询失败（{type(exc).__name__}）')
 		return None, None
 	if payload.get('code') != 0:
 		return None, None
@@ -114,7 +122,7 @@ def fetch_days_left(client, headers: dict[str, str], *, log=print) -> int | None
 	try:
 		payload = parse_json_response(client.get(STATUS_URL, headers=headers, timeout=30))
 	except Exception as exc:
-		log(f'[WARN] Failed to fetch GLaDOS status: {type(exc).__name__}')
+		log(f'[WARN] 剩余天数查询失败（{type(exc).__name__}）')
 		return None
 	if payload.get('code') != 0:
 		return None
@@ -161,20 +169,19 @@ def run_checkin(
 ) -> CheckinResult:
 	headers = request_headers(cookie_header, user_agent=user_agent)
 	max_attempts = max_retries + 1
-	last_message = 'Unknown error'
+	last_message = '未知错误'
 
 	for attempt in range(1, max_attempts + 1):
 		if attempt > 1:
-			log(f'[RETRY] GLaDOS: retrying check-in ({attempt - 1}/{max_retries})')
+			log(f'[RETRY] {attempt - 1}/{max_retries}：{last_message}')
 
 		try:
 			payload = parse_json_response(
 				client.post(CHECKIN_URL, headers=headers, json={'token': 'glados.cloud'}, timeout=30)
 			)
 		except Exception as exc:
-			last_message = f'Network request failed ({type(exc).__name__})'
+			last_message = f'网络请求失败（{type(exc).__name__}）'
 			if attempt < max_attempts:
-				log(f'[RETRY] GLaDOS: attempt {attempt}/{max_attempts} failed - {last_message}')
 				continue
 			return CheckinResult(success=False, message=last_message)
 
@@ -185,28 +192,17 @@ def run_checkin(
 			return CheckinResult(
 				success=False,
 				auth_failed=code in (-2, 401),
-				message=(
-					f'GLaDOS 拒绝访问（{last_message}，code={code}），已停止重试。'
-					+ (
-						recovery_hint
-						or '请运行 checkin-glados login 打开浏览器重新登录，或使用 checkin-glados update-cookie，'
-						'或更新项目 .env 中的 GLADOS_COOKIE / GLADOS_GLD_SESS / GLADOS_GLD_SESS_SIG。'
-						'旧版 GLADOS_KOA_SESS / GLADOS_KOA_SESS_SIG 仅用于旧登录态。'
-					)
-					+ '若更新后仍失败，请检查账号状态或网站访问限制。'
-				),
+				message=f'{"登录已过期" if code in (-2, 401) else "访问被拒绝"}（{code}）。'
+				+ (recovery_hint or '请运行 checkin-glados login 重新登录。'),
 			)
 
 		if code == 4 and payload.get('reason') == 'device-mismatch':
 			return CheckinResult(
-				False, '登录设备与签到设备不匹配。' + (recovery_hint or '请运行 checkin-glados login 更新登录态。')
+				False, '登录设备不匹配。' + (recovery_hint or '请运行 checkin-glados login 重新登录。')
 			)
 
 		if code == 0 or (code == 1 and is_already_checked_message(last_message)):
 			return build_success_result(client, headers, last_message, payload, log=log)
-
-		if attempt < max_attempts:
-			log(f'[RETRY] GLaDOS: attempt {attempt}/{max_attempts} failed - {last_message}')
 
 	return CheckinResult(success=False, message=last_message)
 
@@ -234,24 +230,23 @@ def validate_feishu_response(response: httpx.Response) -> None:
 	try:
 		payload = response.json()
 	except ValueError:
-		raise RuntimeError('Feishu returned invalid JSON') from None
+		raise RuntimeError('飞书响应格式无效') from None
 	if not isinstance(payload, dict):
-		raise RuntimeError('Feishu returned an invalid response')
+		raise RuntimeError('飞书响应格式无效')
 	if not any(key in payload for key in ('StatusCode', 'code', 'errcode')):
-		raise RuntimeError('Feishu response is missing a status code')
+		raise RuntimeError('飞书响应缺少状态码')
 
 	if payload.get('StatusCode') not in (None, 0):
-		raise RuntimeError(f'Feishu request failed: {payload.get("StatusCode")}')
+		raise RuntimeError(f'飞书错误码 {payload.get("StatusCode")}')
 	if payload.get('code') not in (None, 0):
-		raise RuntimeError(f'Feishu request failed: {payload.get("code")}')
+		raise RuntimeError(f'飞书错误码 {payload.get("code")}')
 	if payload.get('errcode') not in (None, 0):
-		raise RuntimeError(f'Feishu request failed: {payload.get("errcode")}')
+		raise RuntimeError(f'飞书错误码 {payload.get("errcode")}')
 
 
 def send_feishu(content: str) -> None:
 	webhook = os.getenv('FEISHU_WEBHOOK', '').strip()
 	if not webhook:
-		print('[INFO] FEISHU_WEBHOOK not configured, notification skipped')
 		return
 
 	data = {
@@ -274,8 +269,8 @@ def send_feishu(content: str) -> None:
 		raise
 	except Exception as exc:
 		# httpx exceptions can contain the full webhook URL. Never print it.
-		raise RuntimeError(f'Feishu transport failed ({type(exc).__name__})') from None
-	print('[Feishu]: Message push successful!')
+		raise RuntimeError(f'飞书连接失败（{type(exc).__name__}）') from None
+	print('[OK] 飞书已发送')
 
 
 def run_account(account: Account, store: AccountStore, proxy: str | None) -> CheckinResult:
@@ -288,29 +283,24 @@ def run_account(account: Account, store: AccountStore, proxy: str | None) -> Che
 			current = next((item for item in store.load() if item.name == account.name), None)
 			if current is None:
 				return CheckinResult(False, '账号已被删除，本次跳过。')
-			log('开始签到')
 			with httpx.Client(http2=True, timeout=30.0, proxy=proxy) as client:
 				result = run_checkin(
 					client,
 					current.cookie_header,
 					user_agent=current.user_agent,
-					recovery_hint=f'请运行 checkin-glados add {account.name} 重新登录，'
-					f'或使用 checkin-glados update-cookie {account.name} 从 Chrome 导入。',
+					recovery_hint=f'请运行 checkin-glados add {account.name} 重新登录。',
 					log=log,
 				)
-			if result.auth_failed:
-				result.message = f'登录态失效，请运行 checkin-glados add {account.name} 重新登录。'
 			try:
 				if result.success or result.auth_failed:
 					store.mark(current, 'valid' if result.success else 'expired')
 			except (AccountError, OSError):
-				log('[WARN] 无法保存账号状态，本次签到结果不变。')
-			log('签到成功' if result.success else '签到失败')
+				log('[WARN] 状态未保存，请检查文件权限。')
 			return result
 	except AccountError as exc:
 		return CheckinResult(False, str(exc))
 	except Exception as exc:
-		return CheckinResult(False, f'运行失败（{type(exc).__name__}），其他账号继续执行。')
+		return CheckinResult(False, f'运行失败（{type(exc).__name__}）')
 
 
 def run_accounts(
@@ -349,6 +339,26 @@ def format_account_notification(results: list[tuple[str, CheckinResult]], *, exe
 	return '\n'.join(lines)
 
 
+def format_terminal_results(results: list[tuple[str, CheckinResult]]) -> str:
+	lines = []
+	for name, result in results:
+		if result.success:
+			message = '今日已签到' if is_already_checked_message(result.message) else '签到成功'
+		else:
+			message = ' '.join(result.message.split())
+		parts = [f'[{"OK" if result.success else "FAILED"}] {name}：{message}']
+		if result.points is not None:
+			parts.append(f'积分 {result.points}')
+		if result.streak is not None:
+			parts.append(f'连续 {result.streak} 天')
+		if result.days_left is not None:
+			parts.append(f'剩余 {result.days_left} 天')
+		lines.append(' · '.join(parts))
+	if len(results) > 1:
+		lines.append(f'完成：{sum(result.success for _, result in results)}/{len(results)} 个账号成功。')
+	return '\n'.join(lines)
+
+
 def main(*, notify: bool = True, selected: str | None = None, concurrency: int | None = None) -> int:
 	load_dotenv(ENV_PATH)
 	store = AccountStore(ENV_PATH.parent)
@@ -359,23 +369,29 @@ def main(*, notify: bool = True, selected: str | None = None, concurrency: int |
 				validate_name(selected)
 				accounts = [account for account in accounts if account.name == selected]
 			if not accounts:
-				raise AccountError('没有可签到的账号，请先运行 checkin-glados add <名称>，或用 list 查看名称。')
+				raise AccountError('未找到账号，请运行 checkin-glados add <名称>。')
 			workers = concurrency if concurrency is not None else int(os.getenv('CHECKIN_CONCURRENCY', '3'))
 			if not 1 <= workers <= 32:
 				raise ValueError
 		except (AccountError, ValueError) as exc:
 			print(f'[FAILED] {exc if isinstance(exc, AccountError) else "CHECKIN_CONCURRENCY 必须为 1–32 的整数。"}')
 			return 1
-		print(f'[INFO] 本次签到 {len(accounts)} 个账号，最多同时运行 {min(workers, len(accounts))} 个。')
+		print('正在签到…', flush=True)
 		results = run_accounts(
 			accounts, store, concurrency=workers, proxy=os.getenv('CHECKIN_PROXY_URL', '').strip() or None
 		)
 		content = format_account_notification(results, execution_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-		return report_result(content, all(result.success for _, result in results), notify=notify)
+		return report_result(
+			content,
+			all(result.success for _, result in results),
+			notify=notify,
+			terminal_content=format_terminal_results(results),
+		)
 
 	try:
 		cookie_header = load_cookie_header()
 		proxy = os.getenv('CHECKIN_PROXY_URL', '').strip() or None
+		print('正在签到…', flush=True)
 		with httpx.Client(http2=True, timeout=30.0, proxy=proxy) as client:
 			result = run_checkin(client, cookie_header)
 	except ValueError:
@@ -384,16 +400,18 @@ def main(*, notify: bool = True, selected: str | None = None, concurrency: int |
 		result = CheckinResult(False, f'运行失败（{type(exc).__name__}）')
 
 	content = format_notification(result, execution_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-	return report_result(content, result.success, notify=notify)
+	return report_result(
+		content, result.success, notify=notify, terminal_content=format_terminal_results([('GLaDOS', result)])
+	)
 
 
-def report_result(content: str, success: bool, *, notify: bool) -> int:
-	print(content)
+def report_result(content: str, success: bool, *, notify: bool, terminal_content: str) -> int:
+	print(terminal_content)
 	if notify:
 		try:
 			send_feishu(content)
 		except Exception as exc:
-			print(f'[Feishu] 通知发送失败：{exc}。上方签到结果不变，请检查 Webhook 和机器人安全设置。')
+			print(f'[WARN] 飞书通知发送失败：{exc}')
 			return 2 if success else 1
 	return 0 if success else 1
 
@@ -407,25 +425,24 @@ def validate_session(session: BrowserSession, user_agent: str | None = None) -> 
 	if payload.get('code') in (-2, 401, 403):
 		return False
 	if payload.get('code') != 0:
-		raise CookieImportError('登录验证接口暂不可用或账户状态异常，原配置未更改。请检查网络或网站控制台。')
+		raise CookieImportError('登录验证失败，请稍后重试或检查网站状态。')
 	return True
 
 
 def login(timeout: int, name: str | None = None) -> int:
 	from browser_login import BrowserLoginError, capture_login
 
+	overrides = [key for key in LOGIN_ENV_KEYS if os.getenv(key)]
 	load_dotenv(ENV_PATH)
 	store = AccountStore(ENV_PATH.parent)
 	if name is None and store.exists:
-		print('[FAILED] 已启用多账号，请运行 checkin-glados add <名称> 指定要登录的账号。')
+		print('[FAILED] 请指定账号：checkin-glados add <名称>')
 		return 1
-	print('[INFO] 正在打开 GLaDOS 登录浏览器，请在新窗口中完成登录和验证。')
-	print('[INFO] 登录完成后会自动提取并验证 Cookie，成功后关闭窗口。')
 	try:
 		with store.account_lock(name) if name is not None else nullcontext():
 			if name is not None:
 				store.check_name(name)
-				print(f'[INFO] 账号名称：{name}。请确认在此窗口中登录的是目标账号。')
+			print(f'[INFO] {name or "GLaDOS"}：请在浏览器中登录，完成后自动保存。', flush=True)
 			session, user_agent = capture_login(
 				store.profile_dir(name) if name is not None else ENV_PATH.parent / '.browser_profiles' / 'glados',
 				timeout=timeout,
@@ -440,39 +457,38 @@ def login(timeout: int, name: str | None = None) -> int:
 		print(f'[FAILED] {exc}')
 		return 1
 	except KeyboardInterrupt:
-		print('[CANCELLED] 已取消登录，原配置未更改。')
+		print('[CANCELLED] 已取消登录，未保存。')
 		return 130
 	except Exception as exc:
-		print(f'[FAILED] 登录未完成（{type(exc).__name__}），请检查网络、代理和文件权限后重试。')
+		print(f'[FAILED] 登录失败（{type(exc).__name__}），请检查网络或文件权限。')
 		return 1
 	if name is not None:
-		print(f'[OK] 账号 {name} 已保存。运行 checkin-glados 签到全部账号，或用 --account {name} 单独签到。')
+		print(f'[OK] {name}：登录已保存。')
 	else:
-		print('[OK] 登录验证成功，已更新项目 .env。运行 checkin-glados 执行签到。')
-		print('[INFO] 如 Shell 中设置过 GLADOS_COOKIE 等登录变量，请先 unset，避免覆盖新配置。')
+		print('[OK] 登录已保存到 .env。')
+		if overrides:
+			print(f'[WARN] 环境变量覆盖 .env，请先执行：unset {" ".join(overrides)}')
 	return 0
 
 
 def update_cookie(profile: str | None = None, name: str | None = None) -> int:
 	from browser_cookie import read_chrome_session
 
-	cookie_keys = ('GLADOS_COOKIE', 'GLADOS_GLD_SESS', 'GLADOS_GLD_SESS_SIG', 'GLADOS_KOA_SESS', 'GLADOS_KOA_SESS_SIG')
-	overrides = [key for key in cookie_keys if os.getenv(key)]
+	overrides = [key for key in LOGIN_ENV_KEYS if os.getenv(key)]
 	load_dotenv(ENV_PATH)
 	store = AccountStore(ENV_PATH.parent)
 	if name is None and store.exists:
-		print('[FAILED] 已启用多账号，请使用 checkin-glados update-cookie <名称> 指定导入目标。')
+		print('[FAILED] 请指定账号：checkin-glados update-cookie <名称>')
 		return 1
-	print('[INFO] 正在读取 Chrome 的 GLaDOS Cookie；macOS 可能提示钥匙串访问授权。')
 	try:
 		with store.account_lock(name) if name is not None else nullcontext():
 			if name is not None:
 				store.check_name(name)
+			print('[INFO] 读取 Chrome 登录态，可能需要钥匙串授权。', flush=True)
 			session = read_chrome_session(profile)
-			print(f'[INFO] 已读取 {session.cookie_name} 登录态，正在验证。')
 			if not validate_session(session):
 				raise CookieImportError(
-					'Chrome 中的 Cookie 未通过 GLaDOS 登录验证，请重新登录网站后重试。原配置未更改。'
+					f'Chrome 登录态无效，请运行 checkin-glados {"add " + name if name else "login"}。'
 				)
 			if name is not None:
 				store.save(name, session.cookie_header, request_headers(session.cookie_header)['User-Agent'])
@@ -482,16 +498,11 @@ def update_cookie(profile: str | None = None, name: str | None = None) -> int:
 		print(f'[FAILED] {exc}')
 		return 1
 	except Exception as exc:
-		print(f'[FAILED] Cookie 导入失败（{type(exc).__name__}），请检查网络、代理和 .env 文件权限后重试。')
+		print(f'[FAILED] 导入失败（{type(exc).__name__}），请检查网络或文件权限。')
 		return 1
-	print(
-		f'[OK] GLaDOS 登录验证成功，已保存账号 {name}。'
-		if name
-		else '[OK] GLaDOS 登录验证成功，Cookie 已写入项目 .env，文件权限为 600。'
-	)
-	print('[INFO] 定时任务下次执行会自动读取新 Cookie；本次未执行签到或发送通知。')
+	print(f'[OK] {name}：登录已导入。' if name else '[OK] 登录已导入 .env。')
 	if overrides and name is None:
-		print(f'[WARN] 当前 Shell 设置了 {", ".join(overrides)}，手动签到前请先 unset，以免覆盖 .env。')
+		print(f'[WARN] 环境变量覆盖 .env，请先执行：unset {" ".join(overrides)}')
 	return 0
 
 
@@ -506,15 +517,15 @@ def list_accounts() -> int:
 			except ValueError:
 				print('尚无账号。请运行 checkin-glados add <名称>。')
 			else:
-				print('当前使用旧版 .env 单账号。可运行 checkin-glados migrate <名称> 迁移为命名账号。')
+				print('旧版单账号。迁移：checkin-glados migrate <名称>')
 			return 0
 		if not accounts:
 			print('暂无已添加账号。请运行 checkin-glados add <名称>。')
+			return 0
+		print('账号          最近状态')
+		labels = {'valid': '有效', 'expired': '已过期', 'unknown': '未验证'}
 		for account in accounts:
-			print(
-				f'{account.name}  (saved, {account.status})  最近验证: {account.checked_at or account.verified_at or "未验证"}'
-			)
-		print('[INFO] 以上为最近记录的状态，list 不访问网站。临时网络错误不会标记为 expired。')
+			print(f'{account.name:<12}  {labels[account.status]}')
 		return 0
 	except AccountError as exc:
 		print(f'[FAILED] {exc}')
@@ -528,13 +539,9 @@ def delete_account(name: str) -> int:
 		print(f'[FAILED] {exc}')
 		return 1
 	except OSError:
-		print('[FAILED] 删除未完全完成，请检查本地账号及浏览器配置目录的权限。')
+		print('[FAILED] 删除未完成，请检查文件权限。')
 		return 1
-	print(
-		f'[OK] 已删除本地账号 {name} 及对应浏览器配置。'
-		if found
-		else '[INFO] 账号未配置，已清理该名称遗留的浏览器配置。'
-	)
+	print(f'[OK] {name}：已删除本地账号和浏览器数据。' if found else f'[OK] {name}：无账号记录，已清理残留浏览器数据。')
 	return 0
 
 
@@ -544,7 +551,7 @@ def migrate_account(name: str) -> int:
 	try:
 		with store.account_lock(name):
 			if any(account.name == name for account in store.load()):
-				raise AccountError('该名称已经存在，迁移不会覆盖账号。请换一个名称。')
+				raise AccountError('账号名称已存在，请换一个名称。')
 			cookie = load_cookie_header()
 			store.save(name, cookie, request_headers(cookie)['User-Agent'], status='unknown')
 	except (AccountError, ValueError) as exc:
@@ -553,30 +560,29 @@ def migrate_account(name: str) -> int:
 	except OSError:
 		print('[FAILED] 迁移失败，请检查文件权限。')
 		return 1
-	print(f'[OK] 已将旧版登录配置复制为账号 {name}，原 .env 保留。当前登录有效性尚未验证。')
-	print('[INFO] 此后仅签到已添加账号，不会额外签到旧版 .env 账号。')
+	print(f'[OK] 已迁移为 {name}（未验证），原 .env 保留。')
 	return 0
 
 
 def cli(argv: list[str] | None = None) -> int:
-	parser = argparse.ArgumentParser(prog='checkin-glados', description='GLaDOS 每日签到、浏览器登录及飞书通知')
+	parser = argparse.ArgumentParser(prog='checkin-glados', description='GLaDOS 多账号签到')
 	parser.add_argument('--no-notify', action='store_true', help='执行签到但不发送飞书通知')
 	parser.add_argument('--account', help='只签到指定名称，默认全部账号')
 	parser.add_argument('--concurrency', type=int, help='同时签到的账号数，1–32，默认 CHECKIN_CONCURRENCY 或 3')
 	commands = parser.add_subparsers(dest='command')
-	add_parser = commands.add_parser('add', help='添加或重新登录一个账号，每个名称使用独立浏览器')
+	add_parser = commands.add_parser('add', help='添加或重新登录账号')
 	add_parser.add_argument('name')
 	add_parser.add_argument('--timeout', type=int, default=300, help='等待登录的秒数，默认 300')
-	commands.add_parser('list', help='列出本地账号及最近记录的状态，不访问网络')
+	commands.add_parser('list', help='查看账号及状态')
 	delete_parser = commands.add_parser('delete', help='删除一个本地账号及对应浏览器配置')
 	delete_parser.add_argument('name')
-	migrate_parser = commands.add_parser('migrate', help='将旧版 .env 登录配置复制为命名账号，不执行签到')
+	migrate_parser = commands.add_parser('migrate', help='迁移旧版账号')
 	migrate_parser.add_argument('name')
-	login_parser = commands.add_parser('login', help='打开独立浏览器，登录后自动保存 Cookie')
+	login_parser = commands.add_parser('login', help='打开浏览器登录')
 	login_parser.add_argument('name', nargs='?', help='账号名称，指定时等价于 add；省略时兼容旧单账号')
 	login_parser.add_argument('--timeout', type=int, default=300, help='等待登录的秒数，默认 300')
-	commands.add_parser('notify-test', help='发送一条飞书测试通知，不执行签到')
-	update = commands.add_parser('update-cookie', help='从 Chrome 获取并验证 GLaDOS Cookie，保存为指定账号')
+	commands.add_parser('notify-test', help='测试飞书通知')
+	update = commands.add_parser('update-cookie', help='从 Chrome 导入登录态')
 	update.add_argument('name', nargs='?', help='导入的账号名称；省略时兼容旧单账号')
 	update.add_argument('--profile', help='Chrome 配置目录名，例如 Default 或 "Profile 1"，默认使用最近使用的配置')
 	args = parser.parse_args(argv)

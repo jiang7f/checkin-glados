@@ -32,12 +32,12 @@ def chrome_cookie_file(profile: str | None = None, *, user_data_dir: Path | None
 		except (OSError, ValueError):
 			profile = 'Default'
 	if not isinstance(profile, str) or Path(profile).name != profile or profile in ('.', '..'):
-		raise CookieImportError('Chrome 配置名无效，请使用 Default 或 Profile 1 这样的目录名。')
+		raise CookieImportError('Chrome 配置名无效，请使用 Default 或 Profile 1。')
 	for relative in ('Network/Cookies', 'Cookies'):
 		path = root / profile / relative
 		if path.is_file():
 			return path
-	raise CookieImportError('未找到 Chrome Cookie 文件，请先在 Chrome 登录 GLaDOS，或用 --profile 指定配置。')
+	raise CookieImportError('未找到 Chrome 登录数据，请先登录或用 --profile 指定配置。')
 
 
 def session_from_cookies(cookies: CookieJar) -> BrowserSession:
@@ -60,14 +60,14 @@ def session_from_cookies(cookies: CookieJar) -> BrowserSession:
 		if not pairs:
 			continue
 		if len(pairs) != 1:
-			raise CookieImportError('发现多个不同的 GLaDOS 登录态，请清理该网站的旧 Cookie 并重新登录后重试。')
+			raise CookieImportError('发现多个 GLaDOS 登录态，请清理网站 Cookie 后重新登录。')
 		session, signature = pairs.pop()
 		if any(
 			not value or any(ord(c) <= 32 or ord(c) >= 127 or c == ';' for c in value) for value in (session, signature)
 		):
 			raise CookieImportError('Chrome 中的 GLaDOS Cookie 格式无效，请重新登录。')
 		return BrowserSession(name, session, signature)
-	raise CookieImportError('未找到完整的 GLaDOS 登录 Cookie，请在 Chrome 登录后重试，或用 --profile 指定配置。')
+	raise CookieImportError('未找到完整登录态，请在 Chrome 登录 GLaDOS 后重试。')
 
 
 def read_chrome_session(profile: str | None = None) -> BrowserSession:
@@ -78,8 +78,7 @@ def read_chrome_session(profile: str | None = None) -> BrowserSession:
 		cookies = browser_cookie3.chrome(cookie_file=str(path), domain_name='glados.cloud')
 	except Exception as exc:
 		raise CookieImportError(
-			f'无法读取 Chrome Cookie（{type(exc).__name__}）。'
-			'请检查 macOS 钥匙串的 Chrome Safe Storage 授权；若数据库被占用，退出 Chrome 后重试。'
+			f'Chrome 导入失败（{type(exc).__name__}），请检查钥匙串授权或退出 Chrome 后重试。'
 		) from None
 	return session_from_cookies(cookies)
 

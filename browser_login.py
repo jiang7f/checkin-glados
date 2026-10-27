@@ -22,7 +22,7 @@ def wait_for_login(
 	while time.monotonic() < deadline:
 		pages = [page for page in context.pages if not page.is_closed()]
 		if not pages:
-			raise BrowserLoginError('登录窗口已关闭，原配置未更改。')
+			raise BrowserLoginError('登录窗口已关闭，未保存。')
 		try:
 			session = session_from_browser_cookies(context.cookies('https://glados.cloud/api/user/status'))
 		except CookieImportError:
@@ -40,7 +40,7 @@ def wait_for_login(
 				next_check = time.monotonic() + 5
 		# Playwright's wait keeps browser events flowing while the user signs in.
 		pages[0].wait_for_timeout(1000)
-	raise BrowserLoginError('等待登录超时，原配置未更改。请重试 login，或使用 --timeout 600 延长等待。')
+	raise BrowserLoginError('登录超时，可加 --timeout 600 重试。')
 
 
 def capture_login(
@@ -59,15 +59,14 @@ def capture_login(
 		context = launch_persistent_context(str(profile_dir), headless=False, proxy=proxy)
 	except Exception as exc:
 		raise BrowserLoginError(
-			f'无法启动登录浏览器（{type(exc).__name__}）。请运行 uv run python -m cloakbrowser install，'
-			'并确认没有其他 login 命令正在使用同一配置目录。'
+			f'浏览器启动失败（{type(exc).__name__}）。请运行 uv run python -m cloakbrowser install。'
 		) from None
 	try:
 		page = context.pages[0] if context.pages else context.new_page()
 		try:
 			page.goto('https://glados.cloud/console', wait_until='domcontentloaded', timeout=min(timeout, 60) * 1000)
 		except PlaywrightTimeoutError:
-			print('[INFO] 页面仍在加载，请在浏览器中完成登录；如页面空白，请检查代理。')
+			print('[INFO] 页面加载较慢，请等待；空白时检查网络。')
 		return wait_for_login(context, timeout=timeout, validate=validate)
 	finally:
 		try:

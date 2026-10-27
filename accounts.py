@@ -18,7 +18,7 @@ class AccountError(Exception):
 
 def validate_name(name: str) -> str:
 	if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,47}', name):
-		raise AccountError('账号名称须为 1–48 位英文字母、数字、下划线或短横线，并以字母或数字开头。')
+		raise AccountError('名称须为 1–48 位字母、数字、_ 或 -，以字母或数字开头。')
 	return name
 
 
@@ -57,7 +57,7 @@ class AccountStore:
 			try:
 				fcntl.flock(stream, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
 			except BlockingIOError:
-				raise AccountError('该账号正在登录、签到或删除，请等待操作结束后重试。') from None
+				raise AccountError('账号正在使用，请稍后重试。') from None
 			try:
 				yield
 			finally:
@@ -69,7 +69,7 @@ class AccountStore:
 	def check_name(self, name: str) -> None:
 		validate_name(name)
 		if any(item.name != name and item.name.casefold() == name.casefold() for item in self.load()):
-			raise AccountError('名称与已有账号仅大小写不同，请使用原名称或选择其他名称。')
+			raise AccountError('名称仅大小写不同，请使用原名称。')
 
 	def profile_dir(self, name: str) -> Path:
 		path = self.profiles / validate_name(name)
@@ -111,9 +111,7 @@ class AccountStore:
 				)
 			return accounts
 		except (OSError, ValueError, KeyError, TypeError, AccountError):
-			raise AccountError(
-				'账号文件无法读取或格式无效，请恢复 .accounts/accounts.json 备份，勿直接覆盖。'
-			) from None
+			raise AccountError('账号文件无效或不可读，请检查权限或恢复 .accounts/accounts.json 备份。') from None
 
 	def _write(self, accounts: list[Account]) -> None:
 		payload = {
@@ -151,7 +149,7 @@ class AccountStore:
 		with self._lock('registry.lock'):
 			accounts = {item.name: item for item in self.load()}
 			if any(existing != name and existing.casefold() == name.casefold() for existing in accounts):
-				raise AccountError('名称与已有账号仅大小写不同，请使用原名称或选择其他名称。')
+				raise AccountError('名称仅大小写不同，请使用原名称。')
 			accounts[name] = Account(
 				name,
 				cookie_header,
@@ -188,7 +186,7 @@ class AccountStore:
 		with self.account_lock(name), self._lock('registry.lock'):
 			accounts = self.load()
 			if any(item.name != name and item.name.casefold() == name.casefold() for item in accounts):
-				raise AccountError('账号名称大小写不匹配，请按 list 显示的名称操作。')
+				raise AccountError('名称大小写不匹配，请用 list 查看。')
 			profile = self.profile_dir(name)
 			found = any(item.name == name for item in accounts)
 			# Keep an empty registry so deleting the last account cannot reactivate legacy credentials.

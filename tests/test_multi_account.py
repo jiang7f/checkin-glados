@@ -94,7 +94,7 @@ def test_list_is_local_and_never_exposes_credentials(monkeypatch, store, capsys)
 	monkeypatch.setattr(checkin.httpx, 'Client', lambda **kw: pytest.fail('list must not access network'))
 	assert checkin.cli(['list']) == 0
 	output = capsys.readouterr().out
-	assert 'main  (saved, valid)' in output
+	assert 'main' in output and '有效' in output
 	assert 'example-private-cookie' not in output
 
 
