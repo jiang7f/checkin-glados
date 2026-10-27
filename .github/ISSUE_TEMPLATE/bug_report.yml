@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: 请勿上传 Cookie、.env、浏览器配置、验证码或飞书 Webhook。收到飞书通知不等于签到成功，请提供通知中的签到结果。
+      value: 请勿上传 Cookie、.env、.accounts/、浏览器配置、验证码或飞书 Webhook。请将个人账号名称替换为 main 等示例。收到飞书通知不等于签到成功，请提供通知中的签到结果。
   - type: input
     id: environment
     attributes:
@@ -24,9 +24,10 @@ body:
     attributes:
       label: 登录方式
       options:
-        - login 独立浏览器
+        - add / login 独立浏览器
         - update-cookie Chrome 导入
-        - 手动 Cookie
+        - migrate 旧配置迁移
+        - 旧版单账号 / 手动 Cookie
         - 尚未登录
     validations:
       required: true

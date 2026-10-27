@@ -1,10 +1,10 @@
 [project]
 name = "checkin-glados"
 version = "0.1.0"
-description = "GLaDOS daily check-in with interactive browser login and Feishu notifications"
+description = "Multi-account GLaDOS daily check-in with concurrent execution, browser login and Feishu notifications"
 readme = "README.md"
 license = "MIT"
-keywords = ["glados", "glados-checkin", "daily-checkin", "automation", "feishu", "cloakbrowser"]
+keywords = ["glados", "glados-checkin", "daily-checkin", "multi-account", "automation", "feishu", "cloakbrowser"]
 requires-python = ">=3.11"
 dependencies = [
   "browser-cookie3>=0.20.1",
