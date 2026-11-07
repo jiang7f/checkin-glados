@@ -3,6 +3,11 @@ import pytest
 import checkin
 
 
+@pytest.fixture(autouse=True)
+def skip_challenge_wait(monkeypatch):
+	monkeypatch.setattr(checkin.time, 'sleep', lambda seconds: None)
+
+
 class FakeResponse:
 	def __init__(self, status_code=200, payload=None):
 		self.status_code = status_code
@@ -34,6 +39,8 @@ class FakeClient:
 
 	def get(self, url, **kwargs):
 		self.gets.append((url, kwargs))
+		if url == checkin.CHALLENGE_URL and url not in self.get_payloads:
+			return FakeResponse(payload={'code': 0, 'nonce': f'nonce-{len(self.gets)}', 'ttl': 300000})
 		return FakeResponse(payload=self.get_payloads[url])
 
 
@@ -88,7 +95,9 @@ def test_checkin_posts_token_and_reads_points():
 	assert result.streak == 3
 	assert result.days_left == 324
 	assert client.posts[0][0] == 'https://glados.cloud/api/user/checkin'
-	assert client.posts[0][1]['json'] == {'token': 'glados.cloud'}
+	assert client.posts[0][1]['json']['token'] == 'glados.cloud'
+	assert client.posts[0][1]['json']['nonce'] == 'nonce-1'
+	assert len(client.posts[0][1]['json']['proof']) == 64
 	assert client.posts[0][1]['headers']['Cookie'] == 'koa:sess=sess; koa:sess.sig=sig'
 
 
@@ -193,7 +202,7 @@ def test_checkin_stops_on_auth_failure_and_explains_cookie_recovery(response):
 
 	assert result.success is False
 	assert len(client.posts) == 1
-	assert client.gets == []
+	assert [url for url, _ in client.gets] == [checkin.CHALLENGE_URL]
 	assert 'checkin-glados login' in result.message
 	assert 'private-session' not in result.message
 	assert 'private-signature' not in result.message

@@ -22,6 +22,8 @@ from accounts import Account, AccountError, AccountStore, validate_name
 
 BASE_URL = 'https://glados.cloud'
 CHECKIN_URL = f'{BASE_URL}/api/user/checkin'
+CHALLENGE_URL = f'{CHECKIN_URL}/challenge'
+CHALLENGE_WAIT_SECONDS = 2.5
 POINTS_URL = f'{BASE_URL}/api/user/points'
 STATUS_URL = f'{BASE_URL}/api/user/status'
 ENV_PATH = Path(__file__).resolve().with_name('.env')
@@ -149,12 +151,36 @@ def is_already_checked_message(message: str) -> bool:
 def build_success_result(client, headers: dict[str, str], message: str, payload: dict, *, log=print) -> CheckinResult:
 	points, streak = fetch_points(client, headers, log=log)
 	days_left = fetch_days_left(client, headers, log=log)
+	# The check-in response's points field is the reward, not the account balance.
+	history = payload.get('list') or []
+	balance = history[0].get('balance') if history and isinstance(history[0], dict) else None
 	return CheckinResult(
 		success=True,
 		message=message,
-		points=points if points is not None else to_int(payload.get('points')),
+		points=points if points is not None else to_int(balance),
 		streak=streak if streak is not None else to_int(payload.get('streak')),
 		days_left=days_left,
+	)
+
+
+def checkin_request(client, headers: dict[str, str]) -> dict:
+	"""Follow the website's single-use challenge and minimum observation delay."""
+	challenge = parse_json_response(client.get(CHALLENGE_URL, headers=headers, timeout=30))
+	if challenge.get('code') != 0:
+		return challenge
+	nonce = challenge.get('nonce')
+	ttl = to_int(challenge.get('ttl'))
+	if not isinstance(nonce, str) or not nonce or ttl is None or ttl <= CHALLENGE_WAIT_SECONDS * 1000:
+		return {'code': -1, 'message': '签到挑战格式无效或已过期，未提交签到'}
+	proof = hashlib.sha256(f'{nonce}.glados-observe-v1'.encode()).hexdigest()
+	time.sleep(CHALLENGE_WAIT_SECONDS)
+	return parse_json_response(
+		client.post(
+			CHECKIN_URL,
+			headers=headers,
+			json={'token': 'glados.cloud', 'nonce': nonce, 'proof': proof},
+			timeout=30,
+		)
 	)
 
 
@@ -176,9 +202,7 @@ def run_checkin(
 			log(f'[RETRY] {attempt - 1}/{max_retries}：{last_message}')
 
 		try:
-			payload = parse_json_response(
-				client.post(CHECKIN_URL, headers=headers, json={'token': 'glados.cloud'}, timeout=30)
-			)
+			payload = checkin_request(client, headers)
 		except Exception as exc:
 			last_message = f'网络请求失败（{type(exc).__name__}）'
 			if attempt < max_attempts:

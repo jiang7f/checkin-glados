@@ -181,6 +181,8 @@ def test_clients_headers_and_auth_status_are_isolated(monkeypatch, store, capsys
 				raise httpx.ConnectError('example-private-cookie')
 			if name == 'device':
 				return httpx.Response(200, json={'code': 4, 'reason': 'device-mismatch'})
+			if request.url == checkin.CHALLENGE_URL:
+				return httpx.Response(200, json={'code': 0, 'nonce': name, 'ttl': 300000})
 			return httpx.Response(200, json={'code': 0, 'message': 'Success', 'points': 100, 'data': {'leftDays': 7}})
 
 		clients.append(requests)

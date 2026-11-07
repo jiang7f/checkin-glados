@@ -60,8 +60,11 @@ def test_no_notify_flag(monkeypatch):
 
 
 @pytest.mark.parametrize('message', ['Try again today', 'Already unauthorized', '明天再试，服务异常'])
-def test_failure_with_today_or_already_is_not_a_success(message):
+def test_failure_with_today_or_already_is_not_a_success(message, monkeypatch):
+	monkeypatch.setattr(checkin.time, 'sleep', lambda seconds: None)
 	class Client:
+		def get(self, *args, **kwargs):
+			return httpx.Response(200, json={'code': 0, 'nonce': 'example', 'ttl': 300000})
 		def post(self, *args, **kwargs):
 			return httpx.Response(200, json={'code': 1, 'message': message})
 

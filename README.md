@@ -15,7 +15,7 @@ English summary — Local multi-account GLaDOS daily check-in with concurrent ex
 - **并发签到**：默认最多同时签到 3 个账号，一个账号失败不影响其他账号，支持指定账号及并发数。
 - **其他登录方式**：从现有 Chrome 导入 Cookie，或自行填写 `.env`。
 - **新旧登录态兼容**：优先使用 `gld:sess`，兼容旧版 `koa:sess`。
-- **签到与查询**：调用签到接口，查询积分、连续天数和剩余天数。
+- **签到与查询**：先获取一次性挑战，按官网流程等待并提交 nonce/proof，再查询积分、连续天数和剩余天数。每次重试重新获取挑战，挑战无效时不会退回旧版签到请求。
 - **重试与错误提示**：临时请求失败最多重试 5 次，鉴权失败立即停止。
 - **飞书通知**：支持自定义机器人 Webhook、签名校验和独立通知测试。
 - **本地定时运行**：提供 macOS `launchd` 模板，默认每天本机时间 10:10 执行。
@@ -371,3 +371,7 @@ uv run pytest -q
 相关项目：[checkin-agentrouter](https://github.com/jiang7f/checkin-agentrouter)，提供 AgentRouter 本地浏览器登录签到。
 
 本项目为第三方工具，与 GLaDOS 官方无关联。使用前请确认符合服务方当前规则。代码采用 [MIT License](LICENSE)。
+
+### 浏览器版本兼容
+
+当前锁定 CloakBrowser 0.6.5，并限制在 0.7 以下。0.7.0 开始要求许可证，不适合直接替换当前无需许可证的多账号后台服务。升级前需单独验证许可证和并发限制。
