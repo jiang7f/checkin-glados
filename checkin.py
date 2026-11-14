@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 from browser_cookie import BrowserSession, CookieImportError, save_session
 from accounts import Account, AccountError, AccountStore, validate_name
+from browser_checkin import browser_checkin, VERIFICATION_MESSAGE
 
 
 BASE_URL = 'https://glados.cloud'
@@ -168,6 +169,8 @@ def checkin_request(client, headers: dict[str, str]) -> dict:
 	challenge = parse_json_response(client.get(CHALLENGE_URL, headers=headers, timeout=30))
 	if challenge.get('code') != 0:
 		return challenge
+	if challenge.get('turnstile'):
+		return {'code': -3, 'reason': 'browser-required', 'message': '官网要求网页验证'}
 	nonce = challenge.get('nonce')
 	ttl = to_int(challenge.get('ttl'))
 	if not isinstance(nonce, str) or not nonce or ttl is None or ttl <= CHALLENGE_WAIT_SECONDS * 1000:
@@ -190,12 +193,14 @@ def run_checkin(
 	*,
 	max_retries: int = 5,
 	user_agent: str | None = None,
+	proxy: str | None = None,
 	recovery_hint: str | None = None,
 	log=print,
 ) -> CheckinResult:
 	headers = request_headers(cookie_header, user_agent=user_agent)
 	max_attempts = max_retries + 1
 	last_message = '未知错误'
+	used_browser = False
 
 	for attempt in range(1, max_attempts + 1):
 		if attempt > 1:
@@ -210,15 +215,25 @@ def run_checkin(
 			return CheckinResult(success=False, message=last_message)
 
 		code = payload.get('code')
+		if payload.get('reason') in ('browser-required', 'turnstile') and not used_browser:
+			log('[INFO] 官网要求 Cloudflare 验证，切换到后台网页签到。')
+			used_browser = True
+			payload = browser_checkin(cookie_header, user_agent=headers['User-Agent'], proxy=proxy)
+			code = payload.get('code')
 		last_message = str(payload.get('message') or payload.get('msg') or payload.get('error') or f'code={code}')
 
-		if code in (-2, 401, 403):
+		if payload.get('reason') in ('turnstile', 'browser-required'):
+			return CheckinResult(False, VERIFICATION_MESSAGE)
+
+		if code in (-2, 401):
 			return CheckinResult(
 				success=False,
-				auth_failed=code in (-2, 401),
-				message=f'{"登录已过期" if code in (-2, 401) else "访问被拒绝"}（{code}）。'
+				auth_failed=True,
+				message=f'登录已过期（{code}）。'
 				+ (recovery_hint or '请运行 checkin-glados login 重新登录。'),
 			)
+		if code == 403:
+			return CheckinResult(False, '访问被网站拒绝（HTTP 403），请检查网络或官网验证；尚不能判断登录是否失效。')
 
 		if code == 4 and payload.get('reason') == 'device-mismatch':
 			return CheckinResult(
@@ -227,6 +242,8 @@ def run_checkin(
 
 		if code == 0 or (code == 1 and is_already_checked_message(last_message)):
 			return build_success_result(client, headers, last_message, payload, log=log)
+		if used_browser:
+			return CheckinResult(False, last_message)
 
 	return CheckinResult(success=False, message=last_message)
 
@@ -312,6 +329,7 @@ def run_account(account: Account, store: AccountStore, proxy: str | None) -> Che
 					client,
 					current.cookie_header,
 					user_agent=current.user_agent,
+					proxy=proxy,
 					recovery_hint=f'请运行 checkin-glados add {account.name} 重新登录。',
 					log=log,
 				)
@@ -417,7 +435,7 @@ def main(*, notify: bool = True, selected: str | None = None, concurrency: int |
 		proxy = os.getenv('CHECKIN_PROXY_URL', '').strip() or None
 		print('正在签到…', flush=True)
 		with httpx.Client(http2=True, timeout=30.0, proxy=proxy) as client:
-			result = run_checkin(client, cookie_header)
+			result = run_checkin(client, cookie_header, proxy=proxy)
 	except ValueError:
 		result = CheckinResult(False, '登录或代理配置无效，请检查 .env 或运行 checkin-glados login。')
 	except Exception as exc:
@@ -446,7 +464,7 @@ def validate_session(session: BrowserSession, user_agent: str | None = None) -> 
 		payload = parse_json_response(
 			client.get(STATUS_URL, headers=request_headers(session.cookie_header, user_agent=user_agent))
 		)
-	if payload.get('code') in (-2, 401, 403):
+	if payload.get('code') in (-2, 401):
 		return False
 	if payload.get('code') != 0:
 		raise CookieImportError('登录验证失败，请稍后重试或检查网站状态。')

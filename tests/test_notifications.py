@@ -39,7 +39,7 @@ def test_notification_failure_preserves_successful_checkin_and_does_not_retry(mo
 	monkeypatch.setattr(checkin, 'load_dotenv', lambda *args: None)
 	monkeypatch.setattr(checkin, 'load_cookie_header', lambda: 'fake-cookie')
 	monkeypatch.setattr(
-		checkin, 'run_checkin', lambda *args: checkin.CheckinResult(True, 'Checkin success', points=100)
+		checkin, 'run_checkin', lambda *args, **kwargs: checkin.CheckinResult(True, 'Checkin success', points=100)
 	)
 	calls = []
 

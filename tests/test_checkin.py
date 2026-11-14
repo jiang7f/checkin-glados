@@ -191,7 +191,6 @@ def test_checkin_treats_already_logged_today_as_success_without_retry():
 	[
 		FakeResponse(payload={'code': -2, 'message': '没有权限'}),
 		FakeResponse(status_code=401),
-		FakeResponse(status_code=403),
 		FakeResponse(payload={'code': -2, 'message': 'Unauthorized today'}),
 	],
 )

@@ -196,7 +196,8 @@ def test_clients_headers_and_auth_status_are_isolated(monkeypatch, store, capsys
 	assert results['expired'].auth_failed
 	assert 'add expired' in results['expired'].message
 	assert 'add device' in results['device'].message
-	assert 'add blocked' in results['blocked'].message
+	assert '403' in results['blocked'].message
+	assert 'add blocked' not in results['blocked'].message
 	assert {a.name: a.status for a in store.load()} == dict.fromkeys(names, 'valid') | {'expired': 'expired'}
 	assert 'example-private-cookie' not in capsys.readouterr().out
 	assert sum(name == 'network' for name, _ in seen) == 6
